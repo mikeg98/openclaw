@@ -183,6 +183,10 @@ function resolveAnthropicUpstreamUrl(
     throw new Error(`refusing unexpected Anthropic upstream origin: ${upstream.origin}`);
   }
   const requestPath = new URL(raw, "http://127.0.0.1");
+  const allowedPaths = new Set(["/v1/messages"]);
+  if (!allowedPaths.has(requestPath.pathname)) {
+    throw new Error(`refusing unexpected Anthropic upstream path: ${requestPath.pathname}`);
+  }
   return new URL(`${requestPath.pathname}${requestPath.search}`, upstream).toString();
 }
 
