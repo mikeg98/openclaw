@@ -1,6 +1,7 @@
 import type { DoctorOptions } from "../commands/doctor-prompter.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { DoctorHealthFlowContext } from "./doctor-health-contribution-types.js";
+import { resolveDoctorWorkspaceSuggestionScopes } from "./doctor-workspace-suggestion-scopes.js";
 import type { HealthCheckContext, HealthFinding } from "./health-checks.js";
 
 type PluginVersionDriftReport =
@@ -8,6 +9,27 @@ type PluginVersionDriftReport =
 
 const loadDoctorStateIntegrityModule = async () =>
   await import("../commands/doctor-state-integrity.js");
+
+export async function runActiveToolSchemaWarningsHealth(
+  ctx: DoctorHealthFlowContext,
+): Promise<void> {
+  // Preview mode already collects these while deciding whether to apply repairs.
+  // Repair mode defers the runtime-backed diagnostic until migrations are durable.
+  if (!ctx.prompter.shouldRepair) {
+    return;
+  }
+  const { collectActiveToolSchemaProjectionWarnings } =
+    await import("../commands/doctor/shared/active-tool-schema-warnings.js");
+  const warnings = await collectActiveToolSchemaProjectionWarnings({
+    cfg: ctx.cfg,
+    env: ctx.env ?? process.env,
+  });
+  if (warnings.length === 0) {
+    return;
+  }
+  const { note } = await import("../../packages/terminal-core/src/note.js");
+  note(warnings.join("\n"), "Doctor warnings");
+}
 
 export async function runHooksModelHealth(ctx: DoctorHealthFlowContext): Promise<void> {
   if (!ctx.cfg.hooks?.gmail?.model?.trim()) {
@@ -122,6 +144,15 @@ export async function runHeartbeatScratchMigrationHealth(
   });
 }
 
+export async function runToolsMdMigrationHealth(ctx: DoctorHealthFlowContext): Promise<void> {
+  const { maybeMigrateToolsMd } = await import("../commands/doctor-tools-md-migration.js");
+  await maybeMigrateToolsMd({
+    cfg: ctx.cfg,
+    shouldRepair: ctx.prompter.shouldRepair,
+    env: ctx.env,
+  });
+}
+
 export async function runHeartbeatTaskMigrationHealth(ctx: DoctorHealthFlowContext): Promise<void> {
   const { maybeMigrateHeartbeatTasksToCron } =
     await import("../commands/doctor-heartbeat-task-migration.js");
@@ -200,15 +231,20 @@ export async function runWorkspaceSuggestionsHealth(ctx: DoctorHealthFlowContext
   if (ctx.options.workspaceSuggestions === false) {
     return;
   }
-  const { resolveAgentWorkspaceDir, resolveDefaultAgentId } =
-    await import("../agents/agent-scope.js");
-  const { noteWorkspaceBackupTip } = await loadDoctorStateIntegrityModule();
+  const { collectWorkspaceBackupTip } = await loadDoctorStateIntegrityModule();
   const { MEMORY_SYSTEM_PROMPT, shouldSuggestMemorySystem } =
     await import("../commands/doctor-workspace.js");
   const { note } = await import("../../packages/terminal-core/src/note.js");
-  const workspaceDir = resolveAgentWorkspaceDir(ctx.cfg, resolveDefaultAgentId(ctx.cfg));
-  noteWorkspaceBackupTip(workspaceDir);
-  if (await shouldSuggestMemorySystem(workspaceDir)) {
-    note(MEMORY_SYSTEM_PROMPT, "Workspace");
+  for (const { agentId, workspaceDir, labelAgent } of resolveDoctorWorkspaceSuggestionScopes(
+    ctx.cfg,
+  )) {
+    const prefix = labelAgent ? `Agent "${agentId}": ` : "";
+    const backupTip = collectWorkspaceBackupTip(workspaceDir);
+    if (backupTip) {
+      note(`${prefix}${backupTip}`, "Workspace");
+    }
+    if (await shouldSuggestMemorySystem(workspaceDir)) {
+      note(`${prefix}${MEMORY_SYSTEM_PROMPT}`, "Workspace");
+    }
   }
 }

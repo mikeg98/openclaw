@@ -7,8 +7,9 @@ import {
   type GatewayRequestHandlerOptions,
 } from "openclaw/plugin-sdk/gateway-runtime";
 import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
+import { MeetingPlatformAdapter } from "openclaw/plugin-sdk/meeting-runtime";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
-import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
+import { isRecord, normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import {
   buildGoogleMeetCalendarDayWindow,
   findGoogleMeetCalendarEvent,
@@ -33,9 +34,7 @@ const loadGoogleMeetCreateModule = createLazyRuntimeModule(() => import("./creat
 export const loadGoogleMeetCliModule = createLazyRuntimeModule(() => import("./cli.js"));
 
 export function asParamRecord(params: unknown): Record<string, unknown> {
-  return params && typeof params === "object" && !Array.isArray(params)
-    ? (params as Record<string, unknown>)
-    : {};
+  return isRecord(params) ? params : {};
 }
 
 export function normalizeTransport(value: unknown): GoogleMeetTransport | undefined {
@@ -47,10 +46,6 @@ export function normalizeMode(value: unknown): GoogleMeetMode | undefined {
     return "agent";
   }
   return value === "agent" || value === "bidi" || value === "transcribe" ? value : undefined;
-}
-
-function isGoogleMeetTalkBackMode(mode: GoogleMeetMode): boolean {
-  return mode === "agent" || mode === "bidi";
 }
 
 export function resolveMeetingInput(config: GoogleMeetConfig, value: unknown): string {
@@ -133,7 +128,7 @@ function isGoogleMeetAgentToolActionUnsupportedOnHost(params: {
     action === "test_speech"
       ? "agent"
       : (normalizeMode(params.raw.mode) ?? params.config.defaultMode);
-  return transport === "chrome" && isGoogleMeetTalkBackMode(mode);
+  return transport === "chrome" && MeetingPlatformAdapter.isTalkBackMode(mode);
 }
 
 export function assertGoogleMeetAgentToolActionSupported(params: {
@@ -307,31 +302,41 @@ export async function resolveArtifactQueryFromParams(
   };
 }
 
+type ResolvedGoogleMeetArtifactQuery = Awaited<ReturnType<typeof resolveArtifactQueryFromParams>>;
+
+export function fetchResolvedGoogleMeetArtifacts(query: ResolvedGoogleMeetArtifactQuery) {
+  return fetchGoogleMeetArtifacts({
+    accessToken: query.token.accessToken,
+    meeting: query.meeting,
+    conferenceRecord: query.conferenceRecord,
+    pageSize: query.pageSize,
+    includeTranscriptEntries: query.includeTranscriptEntries,
+    includeDocumentBodies: query.includeDocumentBodies,
+    allConferenceRecords: query.allConferenceRecords,
+  });
+}
+
+export function fetchResolvedGoogleMeetAttendance(query: ResolvedGoogleMeetArtifactQuery) {
+  return fetchGoogleMeetAttendance({
+    accessToken: query.token.accessToken,
+    meeting: query.meeting,
+    conferenceRecord: query.conferenceRecord,
+    pageSize: query.pageSize,
+    allConferenceRecords: query.allConferenceRecords,
+    mergeDuplicateParticipants: query.mergeDuplicateParticipants,
+    lateAfterMinutes: query.lateAfterMinutes,
+    earlyBeforeMinutes: query.earlyBeforeMinutes,
+  });
+}
+
 export async function exportGoogleMeetBundleFromParams(
   config: GoogleMeetConfig,
   raw: Record<string, unknown>,
 ) {
   const resolved = await resolveArtifactQueryFromParams(config, raw);
   const [artifacts, attendance] = await Promise.all([
-    fetchGoogleMeetArtifacts({
-      accessToken: resolved.token.accessToken,
-      meeting: resolved.meeting,
-      conferenceRecord: resolved.conferenceRecord,
-      pageSize: resolved.pageSize,
-      includeTranscriptEntries: resolved.includeTranscriptEntries,
-      includeDocumentBodies: resolved.includeDocumentBodies,
-      allConferenceRecords: resolved.allConferenceRecords,
-    }),
-    fetchGoogleMeetAttendance({
-      accessToken: resolved.token.accessToken,
-      meeting: resolved.meeting,
-      conferenceRecord: resolved.conferenceRecord,
-      pageSize: resolved.pageSize,
-      allConferenceRecords: resolved.allConferenceRecords,
-      mergeDuplicateParticipants: resolved.mergeDuplicateParticipants,
-      lateAfterMinutes: resolved.lateAfterMinutes,
-      earlyBeforeMinutes: resolved.earlyBeforeMinutes,
-    }),
+    fetchResolvedGoogleMeetArtifacts(resolved),
+    fetchResolvedGoogleMeetAttendance(resolved),
   ]);
   const { buildGoogleMeetExportManifest, googleMeetExportFileNames, writeMeetExportBundle } =
     await loadGoogleMeetCliModule();
