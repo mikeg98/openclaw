@@ -426,27 +426,25 @@ See [Plugins](/tools/plugin).
     },
     tabCleanup: {
       enabled: true,
-      idleMinutes: 120,
-      maxTabsPerSession: 8,
-      sweepMinutes: 5,
+    },
+    extensionRelay: {
+      allowLegacyAuth: true,
     },
     profiles: {
-      openclaw: { cdpPort: 18800, color: "#FF4500" },
+      openclaw: { cdpPort: 18800 },
       work: {
         cdpPort: 18801,
-        color: "#0066CC",
         executablePath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
       },
-      user: { driver: "existing-session", attachOnly: true, color: "#00AA00" },
+      chrome: { driver: "extension" },
+      user: { driver: "existing-session", attachOnly: true },
       brave: {
         driver: "existing-session",
         attachOnly: true,
         userDataDir: "~/Library/Application Support/BraveSoftware/Brave-Browser",
-        color: "#FB542B",
       },
-      remote: { cdpUrl: "http://10.0.0.42:9222", color: "#00AA00" },
+      remote: { cdpUrl: "http://10.0.0.42:9222" },
     },
-    color: "#FF4500",
     // headless: false,
     // noSandbox: false,
     // extraArgs: [],
@@ -457,6 +455,10 @@ See [Plugins](/tools/plugin).
 ```
 
 - `evaluateEnabled: false` disables `act:evaluate` and `wait --fn`.
+- `extensionRelay.allowLegacyAuth` defaults to `true` for one Browser Relay
+  Authentication migration window. It permits old extension and external CDP
+  Bearer, Basic, and token-subprotocol clients. Set it to `false`
+  after all relay clients use auth v2; v2 clients never downgrade.
 - `tabCleanup` controls best-effort periodic cleanup for tracked primary-agent
   tabs after idle time or when a session exceeds its cap. Tracking applies only
   to tabs created by browser tool `action: "open"`; tabs opened by the user or
@@ -487,6 +489,9 @@ See [Plugins](/tools/plugin).
   local managed browser profile and may report local port ownership errors.
 - `existing-session` profiles use Chrome MCP instead of CDP and can attach on
   the selected host or through a connected browser node.
+- `extension` profiles use the authenticated OpenClaw Chrome extension relay.
+  The relay owns its loopback endpoint, so these profiles do not accept
+  `cdpUrl`. See [Chrome extension](/tools/chrome-extension).
 - `existing-session` profiles can set `userDataDir` to target a specific
   Chromium-based browser profile such as Brave or Edge.
 - `existing-session` profiles can set `cdpUrl` when Chrome is already running
@@ -541,8 +546,10 @@ See [Plugins](/tools/plugin).
 - `assistant`: Control UI identity override. Falls back to active agent identity.
 - `prefs`: cross-device operator preferences. This is the canonical home so agents can
   change them through the approval gate and every Control UI client stays in
-  sync; browsers mirror the values into local storage for instant boot and keep
-  a device-local copy when they cannot write config (viewer scope, offline).
+  sync; browsers mirror the values into local storage for instant boot. An
+  explicitly read-only connection keeps edits in that browser without attempting
+  a config write. Offline edits remain queued for a later writable connection and
+  continue as browser-local preferences while reconnected read-only.
   `chatPersistCommentary` defaults to `true`. Setting it to `false` keeps live
   commentary visible during a run but removes it at completion and prevents new
   Codex commentary from entering the durable transcript mirror. Messaging-channel
@@ -1340,7 +1347,8 @@ writer is best-effort, not a lossless compliance archive.
 - `OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental`: environment toggle for latest experimental GenAI inference span shape, including `{gen_ai.operation.name} {gen_ai.request.model}` span names, `CLIENT` span kind, and `gen_ai.provider.name` instead of legacy `gen_ai.system`. By default spans keep `openclaw.model.call` and `gen_ai.system` for compatibility; GenAI metrics use bounded semantic attributes.
 - `OPENCLAW_OTEL_PRELOADED=1`: environment toggle for hosts that already registered a global OpenTelemetry SDK. OpenClaw then skips plugin-owned SDK startup/shutdown while keeping diagnostic listeners active.
 - `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`, and `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`: signal-specific endpoint env vars used when the matching config key is unset.
-- `OTEL_EXPORTER_OTLP_PROTOCOL`: protocol fallback used only when `otel.protocol` is unset. Set it to `http/protobuf` or leave it unset; unsupported values are rejected when an OTLP signal is enabled and are not rewritten by Doctor.
+- `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`, `OTEL_EXPORTER_OTLP_METRICS_PROTOCOL`, and `OTEL_EXPORTER_OTLP_LOGS_PROTOCOL`: signal-specific protocol fallbacks used when `otel.protocol` is unset. Each overrides `OTEL_EXPORTER_OTLP_PROTOCOL` for its signal.
+- `OTEL_EXPORTER_OTLP_PROTOCOL`: shared protocol fallback used when neither `otel.protocol` nor the matching signal-specific variable is set. Only `http/protobuf` is supported. Protocol validation is isolated per signal, so an unsupported resolved value disables that signal's OTLP exporter without blocking supported sibling signals. Doctor does not rewrite environment variables.
 - `cacheTrace.enabled`: log cache trace snapshots for embedded runs (default: `false`).
 
 ---
@@ -1467,14 +1475,14 @@ Current builds no longer include the TCP bridge. Nodes connect over the Gateway 
     webhookSsrfPolicy: {
       allowedHostnames: ["127.0.0.1"], // optional exact exception for a trusted receiver
     },
-    sessionRetention: "24h", // duration string or false
+    sessionRetention: "24h", // duration string ("0h" disables) or false
   },
 }
 ```
 
 - `enabled`: execute stored automation jobs (default: `true`). Set `false` to pause all automation execution without deleting jobs.
 - `triggers.enabled`: also run event-driven automation triggers (default: `false`).
-- `sessionRetention`: how long to keep completed isolated automation run sessions before pruning SQLite session rows. Also controls cleanup of archived deleted automation transcripts. Default: `24h`; set `false` to disable.
+- `sessionRetention`: how long to keep completed isolated automation run sessions before pruning SQLite session rows. Also controls cleanup of archived deleted automation transcripts. Default: `24h`; set `false` or a zero duration such as `"0h"` to disable (negative durations are invalid).
 - Run history automatically keeps the newest 2000 terminal rows per job. Lost rows retain their 24-hour cleanup window.
 - `webhookToken`: bearer token used for automation webhook POST delivery (`delivery.mode = "webhook"`), if omitted no auth header is sent.
 - `webhookSsrfPolicy`: shared outbound SSRF policy for primary, completion, failure-destination, and failure-alert webhooks. Private/internal targets are blocked when omitted. Prefer exact `allowedHostnames`; use `dangerouslyAllowPrivateNetwork: true` only for trusted private-network receivers. The narrow fake-IP proxy flags are `allowRfc2544BenchmarkRange` and `allowIpv6UniqueLocalRange`.
