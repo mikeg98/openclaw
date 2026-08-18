@@ -186,6 +186,22 @@ describeStandaloneMockServer("standalone Control UI mock server", () => {
         const colors = await readMenuColors(page);
         expect(colorContrast(colors.foreground, colors.background)).toBeGreaterThanOrEqual(4.5);
 
+        const widgetBackgrounds = await page
+          .locator('[data-test-id="board-widget"]')
+          .first()
+          .evaluate((widget) => {
+            const frame = widget.querySelector(".board-widget__frame");
+            if (!(frame instanceof HTMLIFrameElement)) {
+              throw new Error("board widget frame is missing");
+            }
+            return {
+              frame: getComputedStyle(frame).backgroundColor,
+              widget: getComputedStyle(widget).backgroundColor,
+            };
+          });
+        expect(widgetBackgrounds.frame).toBe(widgetBackgrounds.widget);
+        expect(widgetBackgrounds.frame).not.toBe("rgba(0, 0, 0, 0)");
+
         await expect
           .poll(() => page.frames().some((frame) => frame.url().startsWith("data:text/html")))
           .toBe(true);
@@ -230,7 +246,7 @@ describeStandaloneMockServer("standalone Control UI mock server", () => {
       await expect
         .poll(() =>
           page
-            .locator(".chat-thread .chat-bubble")
+            .locator(".chat-pane-cache__pane--active .chat-thread .chat-bubble")
             .allTextContents()
             .then((messages) => messages.map((message) => message.trim())),
         )
@@ -240,6 +256,43 @@ describeStandaloneMockServer("standalone Control UI mock server", () => {
           .getByText("Cannot read properties of undefined (reading 'toReversed')", { exact: false })
           .count(),
       ).toBe(0);
+    } finally {
+      await page.close();
+    }
+  });
+
+  it("opens an idle generic session for ordinary sends", async () => {
+    const page = await browser.newPage();
+    try {
+      await page.goto(new URL("/chat", fixtureServer.url).toString(), { waitUntil: "networkidle" });
+      await page.getByText("OpenClaw work checkout", { exact: true }).click();
+
+      await page.getByRole("button", { name: "Write a message to send." }).waitFor();
+      expect(await page.getByRole("button", { name: "Stop" }).count()).toBe(0);
+    } finally {
+      await page.close();
+    }
+  });
+
+  it("renders a deterministic reply after generic chat.send", async () => {
+    const page = await browser.newPage();
+    try {
+      await page.goto(new URL("/chat", fixtureServer.url).toString(), { waitUntil: "networkidle" });
+      await page.getByText("OpenClaw work checkout", { exact: true }).click();
+      await page.getByRole("button", { name: "Write a message to send." }).waitFor();
+
+      const prompt = "generic mock send probe";
+      const composer = page.locator(
+        ".chat-pane-cache__pane--active .agent-chat__composer-combobox textarea",
+      );
+      await composer.fill(prompt);
+      await page.getByRole("button", { name: "Send message" }).click();
+
+      await page
+        .locator(".chat-thread-inner")
+        .getByText(`Mock reply: ${prompt}`, { exact: true })
+        .waitFor();
+      expect(await composer.inputValue()).toBe("");
     } finally {
       await page.close();
     }

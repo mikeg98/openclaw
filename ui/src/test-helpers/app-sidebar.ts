@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, vi } from "vitest";
 import type {
   SessionCatalogPullRequestSummary,
-  SessionsArchiveManyParams,
-  SessionsArchiveManyResult,
   SessionsCatalogListResult,
+  SessionsPatchManyParams,
+  SessionsPatchManyResult,
 } from "../../../packages/gateway-protocol/src/index.ts";
 import type { GatewayBrowserClient } from "../api/gateway.ts";
 import type { AgentsListResult, SessionsListResult } from "../api/types.ts";
@@ -15,7 +15,7 @@ import type {
   ApplicationGatewaySnapshot,
 } from "../app/context.ts";
 import type { ExecApprovalRequest } from "../app/exec-approval.ts";
-import type { ApplicationOverlays } from "../app/overlays.ts";
+import type { ApplicationOverlays } from "../app/overlays-types.ts";
 import type {
   SidebarWorkboardBoard,
   SidebarWorkboardRenderers,
@@ -45,12 +45,14 @@ const sidebarSessionGatewayBindings = new WeakMap<
 >();
 
 export type SidebarLifecycleState = HTMLElement & {
+  hiddenSessionCatalogIds: ReadonlySet<string>;
   activeRouteId?: string;
   activeWorkboardBoardId: string;
   enabledRouteIds?: readonly NavigationRouteId[];
   connected: boolean;
   offline: boolean;
-  outboxCountForSession: (sessionKey: string) => number;
+  outboxAttentionCountForSession: (sessionKey: string) => number;
+  hasSessionDraft: (sessionKey: string) => boolean;
   terminalAvailable: boolean;
   catalogOpenTarget: "viewer" | "terminal";
   canPairDevice: boolean;
@@ -68,10 +70,16 @@ export type SidebarLifecycleState = HTMLElement & {
   ) => void;
   readonly sessionData: SessionDataController;
   readonly sessionOrganizer: SessionOrganizerController;
+  listSessionGroupFolders(path?: string): Promise<{
+    path: string;
+    home: string;
+    entries: Array<{ name: string; path: string; type: "directory" | "file" }>;
+  }>;
   requestUpdate: () => void;
   updateComplete: Promise<boolean>;
   updateAvailable: { currentVersion: string; latestVersion: string; channel: string } | null;
-  updateRunning: boolean;
+  updateBusy: boolean;
+  canUpdate: boolean;
   onUpdate: () => void;
   refreshRequired: boolean;
   onRefresh: () => void;
@@ -86,6 +94,8 @@ export type LobsterPetElement = HTMLElement & {
 
 export type TestSessionMenu = HTMLElement & {
   forkDisabled: boolean;
+  forkFromLastCompleted: boolean;
+  onAction: (action: { kind: "fork" }) => void;
   selectionCount: number;
   readonly updateComplete: Promise<boolean>;
 };
@@ -184,6 +194,7 @@ export function createSessionState(agentId: string, keys: string[]): SessionStat
     },
     sessions: keys.map((key, index) => ({
       key,
+      sessionId: `session:${key}`,
       kind: "direct" as const,
       updatedAt: index + 1,
     })),
@@ -196,6 +207,7 @@ export function createSessionState(agentId: string, keys: string[]): SessionStat
     error: null,
     deletedSessions: [],
     groups: [],
+    groupSettings: [],
     sectionOrder: [],
   };
 }
@@ -224,7 +236,7 @@ export function createSessionsHarness(agentId: string, keys: string[]) {
   let canonicalListRevision = 1;
   const listeners = new Set<(next: SessionState) => void>();
   const pullRequestSummaries = new Map<string, SessionCatalogPullRequestSummary>();
-  const groupsPut = vi.fn(() => Promise.resolve());
+  const groupsPut = vi.fn(() => Promise.resolve<SessionGroupMutationResult>("completed"));
   const groupsRename = vi.fn(() => Promise.resolve<SessionGroupMutationResult>("completed"));
   const groupsDelete = vi.fn(() => Promise.resolve<SessionGroupMutationResult>("completed"));
   const create = vi.fn(() => Promise.resolve("agent:main:fork"));
@@ -245,11 +257,11 @@ export function createSessionsHarness(agentId: string, keys: string[]) {
     Promise.resolve(),
   );
   const refreshReplacement = vi.fn(() => Promise.resolve());
-  const archiveMany = vi.fn(
+  const patchMany = vi.fn(
     async (
-      targets: SessionsArchiveManyParams["targets"],
-      _archived: boolean,
-    ): Promise<SessionsArchiveManyResult> => ({
+      targets: SessionsPatchManyParams["targets"],
+      _patch: SessionsPatchManyParams["patch"],
+    ): Promise<SessionsPatchManyResult> => ({
       outcomes: targets.map((target) => ({
         ok: true,
         key: target.key,
@@ -258,6 +270,7 @@ export function createSessionsHarness(agentId: string, keys: string[]) {
     }),
   );
   const setCreatorFilter = vi.fn(() => Promise.resolve());
+  const setInvolvingMeFilter = vi.fn(() => Promise.resolve());
   const subscribeMessages = vi.fn((key: string, options?: { agentId?: string | null }) =>
     Promise.resolve({ key, agentId: options?.agentId ?? null }),
   );
@@ -279,6 +292,25 @@ export function createSessionsHarness(agentId: string, keys: string[]) {
     return true;
   });
   let scopedSessions: SessionCapability | null = null;
+  const assignOwner = vi.fn<SessionCapability["assignOwner"]>(async (key, owner, options) => {
+    const assigned = scopedSessions ? await scopedSessions.assignOwner(key, owner, options) : null;
+    if (!assigned || !state.result) {
+      return assigned;
+    }
+    state = {
+      ...state,
+      result: {
+        ...state.result,
+        sessions: state.result.sessions.map((row) =>
+          row.key === key ? { ...row, owner: assigned } : row,
+        ),
+      },
+    };
+    for (const listener of listeners) {
+      listener(state);
+    }
+    return assigned;
+  });
   const sessions = {
     get state() {
       return state;
@@ -304,12 +336,16 @@ export function createSessionsHarness(agentId: string, keys: string[]) {
       }
     },
     groupsLoad: () => Promise.resolve(),
+    groupsGeneration: () => 0,
+    groupsStatus: () => "ready",
+    groupsInvalidate: () => undefined,
     groupsPut,
     groupsRename,
     groupsDelete,
     create,
     patch,
-    archiveMany,
+    assignOwner,
+    patchMany,
     delete: deleteSession,
     deleteMany,
     list,
@@ -338,6 +374,7 @@ export function createSessionsHarness(agentId: string, keys: string[]) {
     },
     reconcile,
     setCreatorFilter,
+    setInvolvingMeFilter,
     refresh,
     refreshReplacement,
     subscribeMessages,
@@ -364,9 +401,9 @@ export function createSessionsHarness(agentId: string, keys: string[]) {
           if (method === "sessions.subscribe") {
             return { subscribed: true } as T;
           }
-          if (method === "sessions.archiveMany") {
-            const { targets, archived } = params as SessionsArchiveManyParams;
-            return (await archiveMany(targets, archived)) as T;
+          if (method === "sessions.patchMany") {
+            const { targets, patch: sessionPatch } = params as SessionsPatchManyParams;
+            return (await patchMany(targets, sessionPatch)) as T;
           }
           if (method !== "sessions.list") {
             return client.request<T>(method, params);
@@ -411,12 +448,13 @@ export function createSessionsHarness(agentId: string, keys: string[]) {
     groupsDelete,
     create,
     patch,
-    archiveMany,
+    patchMany,
     deleteSession,
     deleteMany,
     list,
     reconcile,
     setCreatorFilter,
+    setInvolvingMeFilter,
     refresh,
     refreshReplacement,
     subscribeMessages,

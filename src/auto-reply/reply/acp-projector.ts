@@ -4,7 +4,7 @@ import {
   normalizeOptionalLowercaseString,
   normalizeOptionalString,
 } from "@openclaw/normalization-core/string-coerce";
-import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
+import { truncateUtf16Safe, truncateWithMarker } from "@openclaw/normalization-core/utf16-slice";
 import { resolveAcpToolTerminalOutcome } from "../../acp/tool-status.js";
 import { EmbeddedBlockChunker } from "../../agents/embedded-agent-block-chunker.js";
 import { formatToolSummary, resolveToolDisplay } from "../../agents/tool-display.js";
@@ -53,7 +53,7 @@ function truncateText(input: string, maxChars: number): string {
   if (maxChars <= 1) {
     return truncateUtf16Safe(input, maxChars);
   }
-  return `${truncateUtf16Safe(input, maxChars - 1)}…`;
+  return truncateWithMarker(input, maxChars, { marker: "…", reserve: 1, trimEnd: false });
 }
 
 function hashText(text: string): string {
@@ -141,9 +141,14 @@ function shouldFlushLiveBufferOnIdle(text: string): boolean {
   return false;
 }
 
-function renderToolSummaryText(event: Extract<AcpRuntimeEvent, { type: "tool_call" }>): string {
+function renderToolSummaryText(
+  event: Extract<AcpRuntimeEvent, { type: "tool_call" }>,
+  shouldSendFullToolDetails: boolean,
+): string {
   const detailParts: string[] = [];
-  const title = normalizeOptionalString(event.title);
+  const commandBearing = normalizeOptionalLowercaseString(event.kind) === "execute";
+  const title =
+    shouldSendFullToolDetails || !commandBearing ? normalizeOptionalString(event.title) : undefined;
   if (title) {
     detailParts.push(title);
   }
@@ -151,7 +156,8 @@ function renderToolSummaryText(event: Extract<AcpRuntimeEvent, { type: "tool_cal
   if (status) {
     detailParts.push(`status=${status}`);
   }
-  const fallback = normalizeOptionalString(event.text);
+  const fallback =
+    shouldSendFullToolDetails || !commandBearing ? normalizeOptionalString(event.text) : undefined;
   if (detailParts.length === 0 && fallback) {
     detailParts.push(fallback);
   }
@@ -171,6 +177,7 @@ export function createAcpReplyProjector(params: {
   cfg: OpenClawConfig;
   shouldSendToolSummaries: boolean;
   shouldSendToolSummariesNow?: () => boolean;
+  shouldSendFullToolDetails: boolean;
   deliver: (
     kind: ReplyDispatchKind,
     payload: ReplyPayload,
@@ -344,7 +351,7 @@ export function createAcpReplyProjector(params: {
       return;
     }
 
-    const renderedToolSummary = renderToolSummaryText(event);
+    const renderedToolSummary = renderToolSummaryText(event, params.shouldSendFullToolDetails);
     const toolSummary = truncateText(renderedToolSummary, settings.maxSessionUpdateChars);
     const hash = hashText(renderedToolSummary);
     const toolCallId = normalizeOptionalString(event.toolCallId);

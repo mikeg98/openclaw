@@ -47,7 +47,7 @@ describe("settings sidebar search", () => {
         lastError: null,
         gatewayVersion: "",
         updateAvailable: null,
-        updateRunning: false,
+        updateBusy: false,
         onUpdate: vi.fn(),
         ...inactiveRefresh,
         searchQuery: "",
@@ -79,7 +79,7 @@ describe("settings sidebar search", () => {
         lastError: null,
         gatewayVersion: "",
         updateAvailable: null,
-        updateRunning: false,
+        updateBusy: false,
         onUpdate: vi.fn(),
         ...inactiveRefresh,
         searchQuery: "",
@@ -110,7 +110,7 @@ describe("settings sidebar search", () => {
         lastError: null,
         gatewayVersion: "",
         updateAvailable: null,
-        updateRunning: false,
+        updateBusy: false,
         onUpdate: vi.fn(),
         ...inactiveRefresh,
         searchQuery: "cp",
@@ -149,7 +149,7 @@ describe("settings sidebar search", () => {
         lastError: null,
         gatewayVersion: "",
         updateAvailable: null,
-        updateRunning: false,
+        updateBusy: false,
         onUpdate: vi.fn(),
         ...inactiveRefresh,
         searchQuery: "mcp",
@@ -205,7 +205,7 @@ describe("settings sidebar search", () => {
         lastError: null,
         gatewayVersion: "",
         updateAvailable: null,
-        updateRunning: false,
+        updateBusy: false,
         onUpdate: vi.fn(),
         ...inactiveRefresh,
         searchQuery: "infrastructure",
@@ -254,7 +254,7 @@ describe("settings sidebar search", () => {
         lastError: null,
         gatewayVersion: "",
         updateAvailable: null,
-        updateRunning: false,
+        updateBusy: false,
         onUpdate: vi.fn(),
         ...inactiveRefresh,
         searchQuery: "agent defaults",
@@ -286,7 +286,7 @@ describe("settings sidebar search", () => {
         lastError: null,
         gatewayVersion: "",
         updateAvailable: null,
-        updateRunning: false,
+        updateBusy: false,
         onUpdate: vi.fn(),
         ...inactiveRefresh,
         searchQuery: "backend",
@@ -332,7 +332,7 @@ describe("settings sidebar search", () => {
           lastError: null,
           gatewayVersion: "",
           updateAvailable: null,
-          updateRunning: false,
+          updateBusy: false,
           onUpdate: vi.fn(),
           ...inactiveRefresh,
           searchQuery,
@@ -371,13 +371,21 @@ describe("settings sidebar search", () => {
     expect(allLabels).not.toContain("Activity");
     expect(allLabels).not.toContain("Sessions");
     expect(allLabels).toContain("Privacy & Security");
-    expect(allLabels.indexOf("About")).toBe(allLabels.indexOf("Logs") + 1);
+    expect(allLabels.indexOf("Updates")).toBe(allLabels.indexOf("Logs") + 1);
+    expect(allLabels.indexOf("About")).toBe(allLabels.indexOf("Updates") + 1);
 
     enterQuery("  ThEmE  ");
     expect(labels()).toEqual(["Appearance"]);
 
     enterQuery("connections");
-    expect(labels()).toEqual(["Gateway", "Channels", "Communications", "Talk", "Devices"]);
+    expect(labels()).toEqual([
+      "Gateway",
+      "Channels",
+      "Communications",
+      "Talk",
+      "Devices",
+      "Cloud workers",
+    ]);
 
     enterQuery("does-not-exist");
     expect(labels()).toEqual([]);
@@ -414,7 +422,7 @@ describe("settings sidebar search", () => {
         lastError: null,
         gatewayVersion: "",
         updateAvailable: null,
-        updateRunning: false,
+        updateBusy: false,
         onUpdate: vi.fn(),
         ...inactiveRefresh,
         searchQuery: "",
@@ -452,7 +460,8 @@ describe("settings sidebar search", () => {
           latestVersion: "2.0.0",
           channel: "stable",
         },
-        updateRunning: false,
+        updateBusy: false,
+        canUpdate: true,
         onUpdate,
         refreshRequired: true,
         onRefresh,
@@ -502,7 +511,7 @@ describe("settings sidebar search", () => {
           lastError,
           gatewayVersion: "1.0.0",
           updateAvailable: null,
-          updateRunning: false,
+          updateBusy: false,
           onUpdate: vi.fn(),
           ...inactiveRefresh,
           searchQuery: "",

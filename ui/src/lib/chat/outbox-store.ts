@@ -8,6 +8,7 @@ import {
   resolveUiDefaultAgentId,
   resolveUiKnownSelectedGlobalAgentId,
 } from "../sessions/session-key.ts";
+import { compareChatQueueOrder } from "./chat-queue-order.ts";
 import type { ChatQueueItem } from "./chat-types.ts";
 import {
   MAX_RETAINED_QUEUE_ITEMS,
@@ -65,8 +66,14 @@ export type StoredChatOutbox = StoredChatOutboxScope & {
   queue: ChatQueueItem[];
 };
 
+type StoredComposerRow = {
+  scope: ComposerStorageScope;
+  session: StoredComposerSession;
+};
+
 type StoredChatOutboxSummary = {
   countsByScope: ReadonlyMap<string, number>;
+  attentionCountsByScope: ReadonlyMap<string, number>;
   total: number;
 };
 
@@ -271,7 +278,7 @@ function mergeStoredComposerSessions(
       [...(older.queue ?? []), ...(newest.queue ?? [])].map((item) => [item.id, item]),
     ).values(),
   )
-    .toSorted((left, right) => left.createdAt - right.createdAt)
+    .toSorted(compareChatQueueOrder)
     .slice(0, MAX_RETAINED_QUEUE_ITEMS);
   return {
     ...(draftOwner.draft ? { draft: draftOwner.draft } : {}),
@@ -586,7 +593,7 @@ export function applyStoredChatOutboxScope(
   };
 }
 
-export function listStoredChatOutboxes(state: ChatComposerScope): StoredChatOutbox[] {
+function listStoredComposerRows(state: ChatComposerScope): StoredComposerRow[] {
   const storage = getSafeSessionStorage();
   if (!storage) {
     return [];
@@ -627,10 +634,10 @@ export function listStoredChatOutboxes(state: ChatComposerScope): StoredChatOutb
         // A full storage bucket must not hide already-readable outboxes.
       }
     }
-    const outboxes: StoredChatOutbox[] = [];
+    const rows: StoredComposerRow[] = [];
     for (const [storeSessionKey, session] of Object.entries(store.sessions)) {
       const separatorIndex = storeSessionKey.lastIndexOf(separator);
-      if (separatorIndex < 0 || !session.queue?.length) {
+      if (separatorIndex < 0) {
         continue;
       }
       const agentScope = storeSessionKey.slice(separatorIndex + separator.length);
@@ -640,42 +647,83 @@ export function listStoredChatOutboxes(state: ChatComposerScope): StoredChatOutb
         agentScope === UNRESOLVED_GLOBAL_AGENT_SCOPE ? undefined : agentScope,
         store.mainAlias,
       );
-      outboxes.push({
-        sessionKey: scope.conversationKey,
-        ...(scope.routingAgentId ? { agentId: scope.routingAgentId } : {}),
-        queue: session.queue.map((item) => applyStoredChatOutboxScope(item, scope)),
-      });
+      rows.push({ scope, session });
     }
-    return outboxes.toSorted(
-      (left, right) =>
-        (left.queue[0]?.createdAt ?? Number.MAX_SAFE_INTEGER) -
-          (right.queue[0]?.createdAt ?? Number.MAX_SAFE_INTEGER) ||
-        left.sessionKey.localeCompare(right.sessionKey),
-    );
+    return rows;
   } catch {
     return [];
   }
 }
 
+export function listStoredDraftScopes(state: ChatComposerScope): ReadonlySet<string> {
+  const scopeKeys = new Set<string>();
+  for (const { scope, session } of listStoredComposerRows(state)) {
+    // Empty drafts are revision tombstones, not user-visible composer text.
+    if (session.draft) {
+      scopeKeys.add(
+        storedChatOutboxScopeKey({
+          sessionKey: scope.conversationKey,
+          ...(scope.routingAgentId ? { agentId: scope.routingAgentId } : {}),
+        }),
+      );
+    }
+  }
+  return scopeKeys;
+}
+
+export function listStoredChatOutboxes(state: ChatComposerScope): StoredChatOutbox[] {
+  const outboxes: StoredChatOutbox[] = [];
+  for (const { scope, session } of listStoredComposerRows(state)) {
+    if (!session.queue?.length) {
+      continue;
+    }
+    outboxes.push({
+      sessionKey: scope.conversationKey,
+      ...(scope.routingAgentId ? { agentId: scope.routingAgentId } : {}),
+      // Sort on the way out so every reader — drain head selection, projection,
+      // badges — sees one queue order instead of trusting storage array order.
+      queue: session.queue
+        .map((item) => applyStoredChatOutboxScope(item, scope))
+        .toSorted(compareChatQueueOrder),
+    });
+  }
+  return outboxes.toSorted(
+    (left, right) =>
+      (left.queue[0]?.createdAt ?? Number.MAX_SAFE_INTEGER) -
+        (right.queue[0]?.createdAt ?? Number.MAX_SAFE_INTEGER) ||
+      left.sessionKey.localeCompare(right.sessionKey),
+  );
+}
+
 export function summarizeStoredChatOutboxes(state: ChatComposerScope): StoredChatOutboxSummary {
-  const idsByScope = new Map<string, Set<string>>();
+  const idsByScope = new Map<string, { all: Set<string>; attention: Set<string> }>();
   for (const outbox of listStoredChatOutboxes(state)) {
     const scopeKey = storedChatOutboxScopeKey(outbox);
-    const ids = idsByScope.get(scopeKey) ?? new Set<string>();
+    const ids = idsByScope.get(scopeKey) ?? {
+      all: new Set<string>(),
+      attention: new Set<string>(),
+    };
     for (const item of outbox.queue) {
       if (!item.pendingRunId) {
-        ids.add(item.id);
+        ids.all.add(item.id);
+        if (item.sendState === "failed" || item.sendState === "unconfirmed") {
+          ids.attention.add(item.id);
+        }
       }
     }
-    if (ids.size) {
+    if (ids.all.size) {
       idsByScope.set(scopeKey, ids);
     }
   }
   const countsByScope = new Map<string, number>();
+  const attentionCountsByScope = new Map<string, number>();
   let total = 0;
   for (const [scopeKey, ids] of idsByScope) {
-    countsByScope.set(scopeKey, ids.size);
-    total += ids.size;
+    countsByScope.set(scopeKey, ids.all.size);
+    total += ids.all.size;
+    if (ids.attention.size) {
+      attentionCountsByScope.set(scopeKey, ids.attention.size);
+    }
   }
-  return { countsByScope, total };
+  return { countsByScope, attentionCountsByScope, total };
 }

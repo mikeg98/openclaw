@@ -260,6 +260,33 @@ describe("voice-call plugin", () => {
     ];
   });
 
+  it("keeps config presentation metadata manifest-owned", () => {
+    const manifest = JSON.parse(
+      fs.readFileSync(new URL("./openclaw.plugin.json", import.meta.url), "utf8"),
+    ) as {
+      uiHints?: Record<string, Record<string, unknown>>;
+      configSchema?: { properties?: Record<string, unknown> };
+    };
+    const entry = plugin as unknown as { configSchema: Record<string, unknown> };
+
+    expect(entry.configSchema).not.toHaveProperty("uiHints");
+    expect(manifest.uiHints?.agentId).toEqual({
+      label: "Response Agent ID",
+      help: 'Agent workspace used for voice response generation. Defaults to "main".',
+      advanced: true,
+    });
+    expect(manifest.configSchema?.properties?.agentId).toEqual({
+      type: "string",
+      minLength: 1,
+    });
+    expect(manifest.uiHints?.["realtime.consultThinkingLevel"]).toHaveProperty("advanced", true);
+    expect(manifest.uiHints?.["realtime.consultFastMode"]).toHaveProperty("advanced", true);
+    expect(manifest.uiHints?.sessionScope).toMatchObject({
+      label: "Session Scope",
+      help: expect.stringContaining("per-phone"),
+    });
+  });
+
   it("defaults canonical plugin config to an enabled mock runtime", async () => {
     const { service } = setup({});
 
@@ -1200,7 +1227,7 @@ describe("voice-call plugin", () => {
     }
   });
 
-  it("CLI status lists active calls without a call id", async () => {
+  it("CLI status stays read-only when the gateway is unavailable", async () => {
     const program = new Command();
     const stdout = captureStdout();
     await registerVoiceCallCli(program);
@@ -1210,8 +1237,8 @@ describe("voice-call plugin", () => {
       const parsed = JSON.parse(stdout.output()) as {
         calls?: Array<{ callId?: string }>;
       };
-      expect(parsed.calls).toHaveLength(1);
-      expect(parsed.calls?.[0]?.callId).toBe("call-1");
+      expect(parsed.calls).toEqual([]);
+      expect(createVoiceCallRuntime).not.toHaveBeenCalled();
     } finally {
       stdout.restore();
     }

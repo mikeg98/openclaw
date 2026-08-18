@@ -12,13 +12,12 @@ import {
   resolveExpiresAtMsFromEpochSeconds,
 } from "@openclaw/normalization-core/number-coercion";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { cancelUnreadResponseBody } from "../../infra/http-body.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { readProviderJsonResponse } from "../provider-http-errors.js";
 import { resolveProviderRequestHeaders } from "../provider-request-config.js";
 import { notifyAuthProfileFailureHook, setAuthProfileFailureHook } from "./failure-hook.js";
 import { logAuthProfileFailureStateChange } from "./state-observation.js";
-
-const authProfileUsageLog = createSubsystemLogger("agent/embedded");
 import { updateAuthProfileStoreWithLock } from "./store.js";
 import type {
   AuthProfileBlockedSource,
@@ -33,6 +32,8 @@ import {
   isModelScopedCooldownReason,
   resolveProfileUnusableUntil,
 } from "./usage-state.js";
+
+const authProfileUsageLog = createSubsystemLogger("agent/embedded");
 export {
   clearExpiredCooldowns,
   getSoonestCooldownExpiry,
@@ -251,12 +252,6 @@ function applyWhamCooldownResult(params: {
       resolveUsageWindowUntil(params.now, params.whamResult.cooldownMs),
     ),
   };
-}
-
-async function cancelUnreadResponseBody(response: Response): Promise<void> {
-  if (!response.bodyUsed) {
-    await response.body?.cancel().catch(() => undefined);
-  }
 }
 
 async function probeWhamForCooldown(
