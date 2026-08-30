@@ -3,6 +3,7 @@
  * Verifies grouped tool sources, plugin registry inputs, and session-context filters.
  */
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ProviderRuntimeModel } from "../plugins/provider-runtime-model.types.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import { setActivePluginRegistry } from "../plugins/runtime.js";
 import type { createOpenClawCodingTools } from "./agent-tools.js";
@@ -39,7 +40,6 @@ const effectiveInventoryState = vi.hoisted(() => ({
   effectivePolicy: {} as { profile?: string; providerProfile?: string },
   normalizeToolsMock: vi.fn((options: { tools: AnyAgentTool[] }) => options.tools),
   staticCatalogModelMock: vi.fn((_options: unknown) => undefined as unknown),
-  dynamicModelMock: vi.fn((_options: unknown) => undefined as unknown),
   normalizeTransportMock: vi.fn((_options: unknown) => undefined as unknown),
   createToolsMock: vi.fn<typeof createOpenClawCodingTools>(
     (_options) =>
@@ -66,6 +66,7 @@ vi.mock("./agent-tools.js", () => ({
 }));
 
 vi.mock("../plugins/tools.js", () => ({
+  copyPluginToolMeta: vi.fn(),
   getPluginToolMeta: (tool: { name: string }) => effectiveInventoryState.pluginMeta[tool.name],
   buildPluginToolMetadataKey: (pluginId: string, toolName: string) =>
     JSON.stringify([pluginId, toolName]),
@@ -80,9 +81,10 @@ vi.mock("./agent-tools.policy.js", () => ({
   resolveEffectiveToolPolicy: () => effectiveInventoryState.effectivePolicy,
 }));
 
-vi.mock("./runtime-plan/tools.js", () => ({
-  normalizeAgentRuntimeTools: (options: { tools: AnyAgentTool[] }) =>
+vi.mock("./embedded-agent-runner/tool-schema-runtime.js", () => ({
+  normalizeProviderToolSchemas: (options: { tools: AnyAgentTool[] }) =>
     effectiveInventoryState.normalizeToolsMock(options),
+  logProviderToolSchemaDiagnostics: vi.fn(),
 }));
 
 vi.mock("./embedded-agent-runner/model.static-catalog.js", () => ({
@@ -91,21 +93,7 @@ vi.mock("./embedded-agent-runner/model.static-catalog.js", () => ({
 }));
 
 vi.mock("./embedded-agent-runner/model.js", () => ({
-  resolveModel: (
-    provider: unknown,
-    modelId: unknown,
-    agentDir: unknown,
-    cfg: unknown,
-    options: unknown,
-  ) => ({
-    model: effectiveInventoryState.dynamicModelMock({
-      provider,
-      modelId,
-      agentDir,
-      cfg,
-      options,
-    }),
-  }),
+  resolveModelAsync: vi.fn(),
 }));
 
 vi.mock("../plugins/provider-runtime.js", () => ({
@@ -133,7 +121,6 @@ async function loadHarness(options?: {
   effectiveInventoryState.normalizeToolsMock =
     options?.normalizeToolsMock ?? vi.fn((normalizeOptions) => normalizeOptions.tools);
   effectiveInventoryState.staticCatalogModelMock = vi.fn((_options: unknown) => undefined);
-  effectiveInventoryState.dynamicModelMock = vi.fn((_options: unknown) => undefined);
   effectiveInventoryState.normalizeTransportMock = vi.fn((_options: unknown) => undefined);
   effectiveInventoryState.createToolsMock =
     options?.createToolsMock ??
@@ -159,7 +146,6 @@ describe("resolveEffectiveToolInventory", () => {
     effectiveInventoryState.effectivePolicy = {};
     effectiveInventoryState.normalizeToolsMock = vi.fn((options) => options.tools);
     effectiveInventoryState.staticCatalogModelMock = vi.fn((_options: unknown) => undefined);
-    effectiveInventoryState.dynamicModelMock = vi.fn((_options: unknown) => undefined);
     effectiveInventoryState.normalizeTransportMock = vi.fn((_options: unknown) => undefined);
     effectiveInventoryState.createToolsMock = vi.fn<typeof createOpenClawCodingTools>(
       (_options) => effectiveInventoryState.tools,
@@ -778,7 +764,7 @@ describe("resolveEffectiveToolInventory", () => {
     );
   });
 
-  it("uses dynamic provider model context before quarantining runtime-normalized tools", async () => {
+  it("uses prepared model context before quarantining runtime-normalized tools", async () => {
     const normalizeToolsMock = vi.fn((options: { tools: AnyAgentTool[]; modelApi?: string }) =>
       options.tools.map((entry) =>
         entry.name === "parameter_free" && options.modelApi === "openai-responses"
@@ -808,18 +794,25 @@ describe("resolveEffectiveToolInventory", () => {
         normalizeToolsMock,
       },
     );
-    effectiveInventoryState.dynamicModelMock.mockReturnValue({
+    const runtimeModel: ProviderRuntimeModel = {
       id: "chat-latest",
       name: "chat-latest",
       provider: "openai",
       api: "openai-responses",
       baseUrl: "https://api.openai.com/v1",
-    });
+      reasoning: false,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 8192,
+      maxTokens: 1024,
+    };
 
     const result = resolveEffectiveToolInventoryInner({
       cfg: {},
       modelProvider: "openai",
       modelId: "chat-latest",
+      modelApi: runtimeModel.api,
+      runtimeModel,
     });
 
     expect(result.groups[0]?.tools[0]).toMatchObject({
@@ -828,14 +821,6 @@ describe("resolveEffectiveToolInventory", () => {
       pluginId: "normalized-plugin",
     });
     expect(result.notices).toBeUndefined();
-    expect(effectiveInventoryState.dynamicModelMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        provider: "openai",
-        modelId: "chat-latest",
-        agentDir: "/tmp/agents/main/agent",
-        options: expect.objectContaining({ workspaceDir: "/tmp/workspace-main" }),
-      }),
-    );
     expect(normalizeToolsMock).toHaveBeenCalledWith(
       expect.objectContaining({
         provider: "openai",

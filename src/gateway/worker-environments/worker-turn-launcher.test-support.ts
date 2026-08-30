@@ -6,6 +6,7 @@ import {
   prepareAgentRunAdmission,
 } from "../../agents/admitted-run-context.js";
 import { SessionManager } from "../../agents/sessions/session-manager.js";
+import { clearRuntimeConfigSnapshot } from "../../config/io.js";
 import { upsertSessionEntryCore } from "../../config/sessions/session-accessor.js";
 import { resetAgentEventsForTest } from "../../infra/agent-events.js";
 import {
@@ -18,10 +19,12 @@ import {
   type OpenClawTestState,
 } from "../../test-utils/openclaw-test-state.js";
 import type { MintedWorkerCredential } from "./credential.js";
+import { measureNodeWorkerLaunchBytes } from "./node-launch-adapter.js";
 import {
   createWorkerSessionPlacementStore,
   type WorkerSessionPlacementStore,
 } from "./placement-store.js";
+import type { WorkerTurnTunnelHandle } from "./tunnel-contract.js";
 import { createWorkerSessionTurnPlacementProvider as createRawWorkerSessionTurnPlacementProvider } from "./worker-turn-launcher.js";
 import { createWorkerWorkspaceOperationCoordinator } from "./workspace-operation-coordinator.js";
 
@@ -38,6 +41,16 @@ export const OWNER_EPOCH = 3;
 const BUNDLE_HASH = "a".repeat(64);
 export const MANIFEST_REF = `sha256:${"b".repeat(64)}`;
 const HOST_KEY = [["ssh", "ed25519"].join("-"), "AAAA"].join(" ");
+
+export const measureLaunchTurn: WorkerTurnTunnelHandle["measureLaunchTurn"] = (plan, claim) =>
+  measureNodeWorkerLaunchBytes("fixture-node", {
+    environmentSession: 1,
+    launchId: plan.assignment.turnId,
+    gatewayNamespace: "fixture-gateway",
+    expectedBundleHash: plan.admission.handshake.bundleHash,
+    placementGeneration: claim.placementGeneration,
+    descriptor: plan,
+  });
 
 let testState: OpenClawTestState;
 let database: OpenClawStateDatabase;
@@ -78,6 +91,7 @@ export async function setupWorkerTurnLauncherTest(): Promise<void> {
 export async function cleanupWorkerTurnLauncherTest(): Promise<void> {
   cleanupAdmissionSink?.();
   cleanupAdmissionSink = undefined;
+  clearRuntimeConfigSnapshot();
   closeOpenClawStateDatabaseForTest();
   resetAgentEventsForTest();
   await testState.cleanup();
@@ -122,6 +136,7 @@ export function openSessionManager(): SessionManager {
 
 export function seedActivePlacement(
   executionMode: "worker-turn" | "remote-exec" = "worker-turn",
+  remoteWorkspaceDir = "/worker/workspace",
 ): void {
   let placement = placements.startDispatch({
     sessionId: SESSION_ID,
@@ -149,7 +164,7 @@ export function seedActivePlacement(
     to: "starting",
     expectedGeneration: placement.generation,
     patch: {
-      remoteWorkspaceDir: "/worker/workspace",
+      remoteWorkspaceDir,
       workspaceBaseManifestRef: MANIFEST_REF,
     },
   });
@@ -330,6 +345,7 @@ export function turn(runId = "run-worker-turn", executionIdentity = false) {
     runId,
     provider: "openai",
     model: "gpt-test",
+    modelHasVision: true,
     config,
   };
 }

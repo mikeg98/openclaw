@@ -48,6 +48,7 @@ export type SetupInferenceActivationPersistenceState = {
   committedConfig: OpenClawConfig | undefined;
   autoLocalModelLeanApplied: boolean;
   codexInstallOwnership: "unknown" | "owned" | "unowned";
+  gatewayRestartRequired: boolean;
 };
 
 export async function persistActivatedSetupInference(input: {
@@ -197,6 +198,7 @@ export async function persistActivatedSetupInference(input: {
       profiles: plan.manualAuth.profiles,
       agentDir: resolvedRoute.agentDir,
       deps,
+      secretStorage: { config: initialCandidate, env: process.env },
     });
     if (persistedManualAuth.status === "unknown") {
       const rolledBack = await rollbackManualAuthProfiles(persistedManualAuth.receipt, deps);
@@ -228,9 +230,8 @@ export async function persistActivatedSetupInference(input: {
       base: "source",
       // The transform stays side-effect free so a config conflict can retry
       // without replaying credential writes in another agent directory.
-      // Setup changes only hot-reloadable model, agent, and plugin-entry surfaces.
-      // Publish the verified route now so the next turn cannot reuse the old harness.
-      afterWrite: { mode: "auto" },
+      // The install-record owner adds a restart follow-up when this commit adopts
+      // a new plugin source. Preserve that intent for structured setup clients.
       transform: async (current, context) => {
         const latestRuntime = context.snapshot.runtimeConfig ?? context.snapshot.config;
         // Validate that the candidate is still admissible before reporting
@@ -316,6 +317,7 @@ export async function persistActivatedSetupInference(input: {
       },
     });
     committedConfig = committed.nextConfig;
+    state.gatewayRestartRequired = committed.followUp.requiresRestart;
     if (pendingCodexInstall) {
       codexInstallOwnership = "owned";
     }
@@ -368,6 +370,7 @@ export async function persistActivatedSetupInference(input: {
       throw error;
     }
     committedConfig = reconciledSnapshot?.sourceConfig ?? reconciledRuntime;
+    state.gatewayRestartRequired = pendingCodexInstall !== undefined;
     setupInferenceLog.warn(
       "Inference activation committed successfully despite a post-write cleanup error.",
     );

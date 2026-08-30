@@ -80,16 +80,17 @@ endpoint and adapter:
 | Explicit exact official endpoint using HTTP                                                                                                                                     | Rejected              |
 | Route with an authored provider/model request override                                                                                                                          | OpenClaw              |
 
-Valid model-scoped `params.fastMode` / `params.fast_mode` values and valid
-cutoff keys are typed agent-runtime controls, not authored provider request
-params. They do not disqualify implicit Codex selection or select a runtime by
-themselves. Pin `agentRuntime.id: "openclaw"` or `agentRuntime.id: "codex"`
-when a recipe depends on one runtime.
+Valid model-scoped `params.fastMode` / `params.fast_mode`, cutoff, and `thinking`
+values are typed agent-runtime controls, not authored provider request params.
+Affirmative reasoning support and native reasoning-effort metadata also preserve
+Codex selection. See [Runtime selection](/concepts/agent-runtimes#runtime-selection)
+for the supported capability values and the request overrides that remain protected.
 
-An explicit non-default provider/model `agentRuntime.id` remains authoritative.
-For example, `agentRuntime.id: "openclaw"` keeps an otherwise Codex-eligible
-route on OpenClaw, while `agentRuntime.id: "codex"` requires Codex and fails
-closed when the effective route is not declared Codex-compatible.
+An explicit `agentRuntime.id: "openclaw"` keeps a Codex-eligible route on
+OpenClaw. Explicit `agentRuntime.id: "codex"` requires a registered Codex harness;
+unsupported routes/auth fail closed, except that authored request overrides may
+use Codex's declared exact-request OpenClaw fallback before execution. Inspect
+the completed result's actual harness when a recipe depends on native execution.
 Runtime selection does not change credential type or billing: Platform API-key
 auth and ChatGPT/Codex subscription auth remain distinct.
 
@@ -166,16 +167,17 @@ explicit runtime config.
 | Embeddings                | memory embedding provider                                                                     | Yes                                                                      |
 
 <Note>
-GA OpenAI Realtime voice goes through the public **OpenAI Platform Realtime
-API** and requires a Platform API key. Browser and Gateway-relay GPT-Live are
-the exceptions: their native `api.openai.com/v1/live` route prefers a ChatGPT
+GA OpenAI Realtime backend voice bridges require a Platform API key. GA browser
+Talk can also use an OpenClaw ChatGPT OAuth profile when no Platform credential
+is configured. Browser and Gateway-relay GPT-Live use the native
+`api.openai.com/v1/live` route, which prefers a ChatGPT
 OAuth profile and falls back to Platform API-key auth when that account has
 waitlist-gated access. Other GPT-Live backend voice bridges use the Frameless
 Bidi WebSocket and require Platform API-key auth.
 
 Platform auth is resolved in this order: configured realtime API key, `openai`
-API-key profile, then `OPENAI_API_KEY`. ChatGPT OAuth does not configure GA
-Talk, Voice Call, Discord realtime voice, or realtime transcription.
+API-key profile, then `OPENAI_API_KEY`. Voice Call, Discord realtime voice,
+GA Gateway relay, and realtime transcription still require Platform auth.
 
 If API-key auth reports missing billing, top up Platform credits at
 [platform.openai.com/account/billing](https://platform.openai.com/account/billing)
@@ -908,12 +910,12 @@ value into `plugins.entries.openai.config.personality` when that key is unset.
 
     <Note>
     Set `OPENAI_TTS_BASE_URL` to override the TTS base URL without affecting
-    the chat API endpoint. OpenAI TTS and GA Realtime voice are configured
-    through an OpenAI Platform API key. OAuth-only installs can use
-    Codex-backed chat models plus GPT-Live and GA Realtime browser Talk over a
-    ChatGPT subscription (see the Realtime accordion). They cannot use OpenAI
-    TTS, iOS Realtime WebRTC, Voice Call, Gateway relay, or Discord realtime
-    voice without a Platform API key.
+    the chat API endpoint. OpenAI TTS requires an OpenAI Platform API key.
+    OAuth-only installs can use Codex-backed chat models, GPT-Live browser
+    and Gateway-relay Talk, and GA Realtime browser Talk over a ChatGPT
+    subscription when the account has access (see the Realtime accordion).
+    OpenAI TTS, Voice Call, GA Gateway relay, and Discord realtime voice still
+    require a Platform API key.
     </Note>
 
   </Accordion>
@@ -1017,9 +1019,9 @@ value into `plugins.entries.openai.config.personality` when that key is unset.
     credentials on different sides of the trust boundary. Platform auth mints
     an ephemeral client secret and the browser exchanges SDP directly with
     OpenAI. OAuth auth stays in the Gateway: the existing single-use offer
-    broker sends raw `application/sdp` to
-    `/v1/realtime/calls?model=<model>` and returns only the answer SDP. The
-    OAuth token never reaches the browser. A configured Platform credential
+    broker sends multipart `sdp` plus the canonical browser `session` policy
+    to `/v1/realtime/calls` and returns only the answer SDP. The OAuth token
+    never reaches the browser. A configured Platform credential
     that cannot be resolved still fails closed; repair or remove that source
     before OAuth fallback can apply.
 
@@ -1099,8 +1101,14 @@ value into `plugins.entries.openai.config.personality` when that key is unset.
     | Gateway-relay Talk | Supported with Gateway-owned WebRTC and sideband |
     | Discord bidirectional voice | Supported with the Platform-key backend WebSocket |
     | Voice Call and telephony | Supported with the Platform-key backend WebSocket |
-    | iOS client-owned Talk | Pending |
+    | iOS client-owned Talk | Implemented; GPT-Live device live verification pending |
     | Android realtime Talk | Pending an Android device live-proof flip; Android stays on native Talk |
+
+    These rows describe implemented transports, not account entitlement or
+    complete model capability parity. See the [Discord voice policy limits](/channels/discord#voice-channels)
+    and [Voice Call tool limits](/plugins/voice-call#realtime-voice-conversations) before
+    selecting GPT-Live for those consumers.
+
     <Warning>
     Platform API-key access to `/v1/live` is waitlist-gated and commonly returns
     `400 model_not_found` without enrollment. Use a ChatGPT OAuth profile, or request Platform access with the
@@ -1307,9 +1315,10 @@ request settings, so an otherwise eligible `auto` route stays on OpenClaw
 instead of selecting Codex implicitly. Valid `fastMode` / `fast_mode` values
 and valid cutoff keys are typed agent-runtime controls and do not select a
 runtime. Runtime-specific examples therefore pin `agentRuntime.id` explicitly.
-The native Codex app-server harness owns its own transport and request settings;
-explicit `agentRuntime.id: "codex"` fails closed when the effective route is
-not declared Codex-compatible.
+The native Codex app-server harness owns its transport and request settings.
+Authored embedded-provider settings can therefore select the declared OpenClaw
+fallback even with explicit `agentRuntime.id: "codex"`; see
+[Runtime selection](/concepts/agent-runtimes#runtime-selection).
 
 <AccordionGroup>
   <Accordion title="Transport (WebSocket vs SSE)">

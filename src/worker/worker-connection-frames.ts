@@ -2,6 +2,9 @@ import { randomUUID } from "node:crypto";
 import { Value } from "typebox/value";
 import { WebSocket } from "ws";
 import {
+  type WorkerGitHubPublishParams,
+  type WorkerGitHubPublishResponseFrame,
+  WorkerGitHubPublishResponseFrameSchema,
   type WorkerConnectParams,
   type WorkerHeartbeatParams,
   type WorkerHeartbeatResponseFrame,
@@ -9,6 +12,9 @@ import {
   type WorkerLiveEventParams,
   type WorkerLiveEventResponseFrame,
   WorkerLiveEventResponseFrameSchema,
+  type WorkerPortalParams,
+  type WorkerPortalResponseFrame,
+  WorkerPortalResponseFrameSchema,
   WORKER_PROTOCOL_MAX_PAYLOAD_BYTES,
   type WorkerSessionsSendParams,
   type WorkerSessionsSendResponseFrame,
@@ -33,6 +39,7 @@ import {
   validateWorkerInferenceEventFrame,
   validateWorkerInferenceTerminalFrame,
 } from "../../packages/gateway-protocol/src/schema/worker-inference.js";
+import { WORKER_PROTOCOL_MAX_TRANSCRIPT_PAYLOAD_BYTES } from "../../packages/gateway-protocol/src/schema/worker-protocol-primitives.js";
 import { notifyListeners } from "../shared/listeners.js";
 import {
   createPendingRequestRegistry,
@@ -64,6 +71,14 @@ const WORKER_REQUEST_SPECS = {
     method: "worker.sessions.send",
     responseSchema: WorkerSessionsSendResponseFrameSchema,
   },
+  "github-publish": {
+    method: "worker.github.publish",
+    responseSchema: WorkerGitHubPublishResponseFrameSchema,
+  },
+  portal: {
+    method: "worker.portal",
+    responseSchema: WorkerPortalResponseFrameSchema,
+  },
   "inference-start": {
     method: "worker.inference.start",
     responseSchema: WorkerInferenceStartResponseFrameSchema,
@@ -81,6 +96,8 @@ type WorkerRequestParams = {
   "live-event": WorkerLiveEventParams;
   "sessions-spawn": WorkerSessionsSpawnParams;
   "sessions-send": WorkerSessionsSendParams;
+  "github-publish": WorkerGitHubPublishParams;
+  portal: WorkerPortalParams;
   "inference-start": WorkerInferenceStartParams;
   "inference-cancel": WorkerInferenceCancelParams;
 };
@@ -90,6 +107,8 @@ type WorkerResponseFrames = {
   "live-event": WorkerLiveEventResponseFrame;
   "sessions-spawn": WorkerSessionsSpawnResponseFrame;
   "sessions-send": WorkerSessionsSendResponseFrame;
+  "github-publish": WorkerGitHubPublishResponseFrame;
+  portal: WorkerPortalResponseFrame;
   "inference-start": WorkerInferenceStartResponseFrame;
   "inference-cancel": WorkerInferenceCancelResponseFrame;
 };
@@ -249,7 +268,9 @@ export class WorkerConnectionFrameDispatcher {
     const payloadLimit =
       value.kind === "inference-start"
         ? WORKER_PROTOCOL_MAX_INFERENCE_PAYLOAD_BYTES
-        : WORKER_PROTOCOL_MAX_PAYLOAD_BYTES;
+        : value.kind === "transcript"
+          ? WORKER_PROTOCOL_MAX_TRANSCRIPT_PAYLOAD_BYTES
+          : WORKER_PROTOCOL_MAX_PAYLOAD_BYTES;
     if (Buffer.byteLength(encoded, "utf8") > payloadLimit) {
       return Promise.reject(new Error("worker request exceeds the protocol payload limit"));
     }

@@ -8,6 +8,23 @@ afterEach(async () => {
 });
 
 describe("findSettingsSearchBlocks", () => {
+  it("finds the task progress disclosure preference in Chat settings", () => {
+    const matches = findSettingsSearchBlocks({
+      query: "task progress",
+      schema: null,
+      value: null,
+      uiHints: {},
+    });
+
+    expect(matches).toEqual([
+      expect.objectContaining({
+        routeId: "appearance",
+        label: "Chat",
+        hash: "#settings-appearance-chat",
+      }),
+    ]);
+  });
+
   it("uses word prefixes instead of arbitrary substrings for short queries", () => {
     const matches = findSettingsSearchBlocks({
       query: "cp",
@@ -172,6 +189,21 @@ describe("findSettingsSearchBlocks", () => {
         hash: "#settings-communications-notifications",
       }),
     ]);
+  });
+
+  it("omits admin-only static and schema results for non-admin viewers", () => {
+    expect(
+      findSettingsSearchBlocks({
+        query: "security",
+        schema: {
+          type: "object",
+          properties: { security: { type: "object", title: "Security" } },
+        },
+        value: {},
+        uiHints: {},
+        canAdmin: false,
+      }),
+    ).toEqual([]);
   });
 
   it("routes uncurated schema sections to the Advanced page", () => {

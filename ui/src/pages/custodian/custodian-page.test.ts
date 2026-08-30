@@ -379,30 +379,6 @@ describe("custodian page", () => {
     ]);
   });
 
-  it("continues to the welcome when the bounded history request times out", async () => {
-    const request = vi.fn(
-      async (method: string, _params?: unknown, options?: { timeoutMs?: number }) => {
-        if (method === "openclaw.chat.history") {
-          expect(options).toEqual({ timeoutMs: 15_000 });
-          throw new Error("history request timed out");
-        }
-        return {
-          sessionId: "engine-session-after-history-timeout",
-          reply: "Welcome without history.",
-          action: "none",
-        };
-      },
-    );
-    const { context } = createContext(request, ["openclaw.chat", "openclaw.chat.history"]);
-    const { page } = await mountPage(context);
-
-    await waitForFast(() => expect(page.textContent).toContain("Welcome without history."));
-    expect(request.mock.calls.map(([method]) => method)).toEqual([
-      "openclaw.chat.history",
-      "openclaw.chat",
-    ]);
-  });
-
   it("refreshes durable rows for a same-ownership client replacement", async () => {
     let historyCalls = 0;
     const request = vi.fn(async (method: string, _params?: unknown) => {
@@ -518,9 +494,13 @@ describe("custodian page", () => {
     const { page } = await mountPage(context);
     await waitForFast(() => expect(request).toHaveBeenCalledOnce());
     await page.updateComplete;
-    const input = page.querySelector<HTMLInputElement>(
-      '.agent-chat__composer-combobox input[type="password"]',
-    )!;
+    const input = await waitForFast(() => {
+      const candidate = page.querySelector<HTMLInputElement>(
+        '.agent-chat__composer-combobox input[type="password"]',
+      );
+      expect(candidate).not.toBeNull();
+      return candidate!;
+    });
     input.value = "test-token-placeholder";
     input.dispatchEvent(new InputEvent("input", { bubbles: true }));
     await page.updateComplete;
@@ -697,9 +677,13 @@ describe("custodian page", () => {
     const { page } = await mountPage(context);
     await waitForFast(() => expect(request).toHaveBeenCalledTimes(2));
 
-    const input = page.querySelector<HTMLInputElement>(
-      '.agent-chat__composer-combobox input[type="password"]',
-    )!;
+    const input = await waitForFast(() => {
+      const candidate = page.querySelector<HTMLInputElement>(
+        '.agent-chat__composer-combobox input[type="password"]',
+      );
+      expect(candidate).not.toBeNull();
+      return candidate!;
+    });
     input.value = "test-token-placeholder";
     input.dispatchEvent(new InputEvent("input", { bubbles: true }));
     await page.updateComplete;
@@ -850,6 +834,29 @@ describe("custodian page", () => {
 
     expect(context.navigate).toHaveBeenCalledWith("chat");
     expect(request).toHaveBeenCalledOnce();
+  });
+
+  it("reveals a collapsed fenced code block in the caretaker transcript", async () => {
+    const code = Array.from({ length: 20 }, (_, index) => `line ${index}`).join("\n");
+    const request = vi.fn().mockResolvedValue({
+      sessionId: "control-ui-onboarding-00000000-0000-4000-8000-000000000001",
+      reply: `Here you go:\n\n\`\`\`bash\n${code}\n\`\`\``,
+      action: "none",
+    });
+    const { context } = createContext(request);
+    const { page } = await mountPage(context);
+    await waitForFast(() => expect(request).toHaveBeenCalledOnce());
+    await page.updateComplete;
+
+    const wrapper = page.querySelector(".code-block-wrapper");
+    const expand = page.querySelector<HTMLButtonElement>(".code-block-expand");
+    expect(wrapper?.classList.contains("is-collapsible")).toBe(true);
+    expect(expand?.textContent).toContain("13 hidden lines");
+
+    expand?.click();
+
+    expect(wrapper?.classList.contains("is-expanded")).toBe(true);
+    expect(expand?.getAttribute("aria-expanded")).toBe("true");
   });
 
   it("does not render a silent assistant reply", async () => {

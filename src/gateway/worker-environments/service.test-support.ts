@@ -156,6 +156,19 @@ export function getDevelopmentProfile() {
   );
 }
 
+export async function reopenWorkerEnvironmentStore() {
+  await testState.service?.stop();
+  testState.service = undefined;
+  closeOpenClawStateDatabaseForTest();
+  testState.stateDb = openOpenClawStateDatabase({
+    env: { OPENCLAW_STATE_DIR: testState.root },
+  });
+  testState.store = createWorkerEnvironmentStore({
+    database: testState.stateDb,
+    now: () => testState.nowMs,
+  });
+}
+
 export function createService(
   provider: WorkerProvider,
   serviceOptions: Partial<
@@ -170,10 +183,13 @@ export function createService(
       | "ensureNodeWorkerBundle"
       | "prepareNodeEnrollment"
       | "retireNodeEnrollment"
+      | "stopNodeEnrollmentWaits"
       | "tunnelManager"
       | "generateWorkerCredential"
       | "liveEvents"
+      | "now"
       | "nodeTunnelManager"
+      | "nodeDesktopCarrier"
       | "placementStore"
       | "workerCredentialTtlMs"
     >
@@ -208,6 +224,7 @@ export function createProvider(overrides: Partial<WorkerProvider> = {}): WorkerP
   return {
     id: "fake",
     supportedExecutionModes: ["remote-exec"],
+    resolveAllocation: async () => ({ leaseId: "lease-1", sharedHost: false }),
     provision: async () => ({ leaseId: "lease-1", ssh: SSH_ENDPOINT }),
     inspect: async () => ({ status: "active" }),
     destroy: async () => {},
@@ -294,6 +311,36 @@ export function seedReadyDesktop(environmentId: string, desktop: WorkerDesktopEn
     from: bootstrapping.state,
     to: "ready",
     patch: readyPatch(environmentId),
+  });
+}
+
+export function seedReadyNodeDesktop(
+  environmentId: string,
+  desktop: WorkerDesktopEndpoint = DESKTOP,
+) {
+  const intent = testState.store.createIntent({
+    environmentId,
+    providerId: "fake",
+    profileId: "development",
+    profileSnapshot: { settings: { region: "test", desktop: true } },
+    provisionOperationId: `provision:${environmentId}`,
+  });
+  const provisioning = testState.store.transition({
+    environmentId,
+    from: intent.state,
+    to: "provisioning",
+  });
+  return testState.store.transition({
+    environmentId,
+    from: provisioning.state,
+    to: "ready",
+    patch: {
+      leaseId: `lease:${environmentId}`,
+      nodeDeviceId: `node:${environmentId}`,
+      sshEndpoint: null,
+      desktop,
+      ...readyPatch(environmentId),
+    },
   });
 }
 
@@ -470,6 +517,7 @@ export function placementHarness(
   identity.credentialHash = credentialHash;
   const placementStore = {
     readWorkerTurnClaim: vi.fn(() => claim),
+    readWorkerTurnLiveAckCursor: vi.fn(() => 0),
     validateWorkerTurn: vi.fn(() => true),
     isWorkerTurnToolAuthorized: vi.fn(() => true),
     updateAckCursors: vi.fn(),

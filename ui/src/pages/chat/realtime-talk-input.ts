@@ -71,17 +71,23 @@ function deviceDetailsHidden(devices: MediaDeviceInfo[], kind: RealtimeTalkDevic
   return inputs.length === 0 || inputs.some((device) => !device.deviceId || !device.label);
 }
 
-const deviceIssueByDomErrorName: Record<string, RealtimeTalkDeviceIssue> = {
+const deviceIssueByMediaErrorName: Record<string, RealtimeTalkDeviceIssue> = {
   NotAllowedError: "permission-blocked",
   NotFoundError: "none-found",
   NotReadableError: "busy",
   InvalidStateError: "page-inactive",
 };
 
+function mediaDeviceErrorName(error: unknown): string | undefined {
+  // WebKit shipped OverconstrainedError as Error instead of DOMException.
+  if (error instanceof DOMException) {
+    return error.name;
+  }
+  return error instanceof Error && error.name === "OverconstrainedError" ? error.name : undefined;
+}
+
 function deviceIssueFromError(error: unknown): RealtimeTalkDeviceIssue {
-  return (
-    (error instanceof DOMException ? deviceIssueByDomErrorName[error.name] : undefined) ?? "failed"
-  );
+  return deviceIssueByMediaErrorName[mediaDeviceErrorName(error) ?? ""] ?? "failed";
 }
 
 export function realtimeTalkDeviceIssueMessage(
@@ -221,25 +227,33 @@ export async function openRealtimeTalkInput(
   if (!devices?.getUserMedia) {
     throw new Error(t("chat.composer.realtimeTalkRequiresMicrophone"));
   }
-  let audio: MediaStream;
+  let acquisition: { stream: MediaStream } | { failure: string };
   try {
-    audio = await awaitRealtimeTalkMediaRequest(
-      () =>
-        devices.getUserMedia({
-          audio: realtimeTalkAudioConstraints(inputDeviceId),
-        }),
-      options.signal,
-    );
+    acquisition = {
+      stream: await awaitRealtimeTalkMediaRequest(
+        () =>
+          devices.getUserMedia({
+            audio: realtimeTalkAudioConstraints(inputDeviceId),
+          }),
+        options.signal,
+      ),
+    };
   } catch (error) {
-    if (
-      inputDeviceId?.trim() &&
-      error instanceof DOMException &&
-      error.name === "OverconstrainedError"
-    ) {
-      throw new Error(t("chat.composer.selectedMicrophoneUnavailable"), { cause: error });
+    const errorName = mediaDeviceErrorName(error);
+    if (!errorName || errorName === "AbortError") {
+      throw error;
     }
-    throw error;
+    acquisition = {
+      failure:
+        inputDeviceId?.trim() && errorName === "OverconstrainedError"
+          ? t("chat.composer.selectedMicrophoneUnavailable")
+          : describeRealtimeTalkInputError(error),
+    };
   }
+  if ("failure" in acquisition) {
+    throw new Error(acquisition.failure);
+  }
+  const { stream: audio } = acquisition;
   if (options.signal?.aborted) {
     audio.getTracks().forEach((track) => track.stop());
     throw realtimeTalkAbortReason(options.signal);
@@ -256,36 +270,31 @@ export async function openRealtimeTalkCamera(
     throw new Error(t("chat.composer.cameraAccessFailed"));
   }
   const deviceId = videoDeviceId?.trim();
-  let camera: MediaStream;
+  let acquisition: { stream: MediaStream } | { failure: string };
   try {
-    camera = await awaitRealtimeTalkMediaRequest(
-      () =>
-        devices.getUserMedia({
-          video: deviceId ? { deviceId: { exact: deviceId } } : true,
-        }),
+    const stream = await awaitRealtimeTalkMediaRequest(
+      () => devices.getUserMedia({ video: deviceId ? { deviceId: { exact: deviceId } } : true }),
       options.signal,
     );
     if (options.signal?.aborted) {
-      camera.getTracks().forEach((track) => track.stop());
+      stream.getTracks().forEach((track) => track.stop());
       throw realtimeTalkAbortReason(options.signal);
     }
-    return camera;
+    acquisition = { stream };
   } catch (error) {
     if (options.signal?.aborted) {
       throw realtimeTalkAbortReason(options.signal);
     }
-    if (deviceId && error instanceof DOMException && error.name === "OverconstrainedError") {
-      throw new Error(t("chat.composer.selectedCameraUnavailable"), { cause: error });
-    }
-    if (error instanceof DOMException && error.name === "NotAllowedError") {
-      throw new Error(t("chat.composer.cameraPermissionBlocked"), { cause: error });
-    }
-    if (error instanceof DOMException && error.name === "NotFoundError") {
-      throw new Error(t("chat.composer.cameraNoneFound"), { cause: error });
-    }
-    if (error instanceof DOMException && error.name === "NotReadableError") {
-      throw new Error(t("chat.composer.cameraBusy"), { cause: error });
-    }
-    throw new Error(t("chat.composer.cameraAccessFailed"), { cause: error });
+    const errorName = mediaDeviceErrorName(error);
+    acquisition = {
+      failure:
+        deviceId && errorName === "OverconstrainedError"
+          ? t("chat.composer.selectedCameraUnavailable")
+          : realtimeTalkDeviceIssueMessage(deviceIssueFromError(error), "videoinput"),
+    };
   }
+  if ("failure" in acquisition) {
+    throw new Error(acquisition.failure);
+  }
+  return acquisition.stream;
 }
