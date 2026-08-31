@@ -1,8 +1,8 @@
 name: PR CI Sweeper
 
-# Repairs dropped pull_request CI via close/reopen and non-destructively revives
-# cancelled GitHub Actions checks attached to auto-merge PR heads. The app token
-# authorizes reruns; GITHUB_TOKEN close/reopen events would not trigger CI.
+# Non-destructively revives canceled GitHub Actions checks attached to auto-merge
+# PR heads. GITHUB_TOKEN close/reopen events would not trigger new CI runs, so
+# that upstream-only repair lane is intentionally disabled in this fork.
 
 on:
   schedule:
