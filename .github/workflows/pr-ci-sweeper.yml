@@ -1,8 +1,8 @@
 name: PR CI Sweeper
 
-# Non-destructively revives canceled GitHub Actions checks attached to auto-merge
-# PR heads. GITHUB_TOKEN close/reopen events would not trigger new CI runs, so
-# that upstream-only repair lane is intentionally disabled in this fork.
+# Repairs dropped pull_request CI via close/reopen and non-destructively revives
+# cancelled GitHub Actions checks attached to auto-merge PR heads. The app token
+# authorizes reruns; GITHUB_TOKEN close/reopen events would not trigger CI.
 
 on:
   schedule:
@@ -26,25 +26,36 @@ permissions: {}
 
 jobs:
   sweep:
+    if: github.repository == 'openclaw/openclaw'
     permissions:
-      actions: write
-      checks: read
       contents: read
-      issues: read
-      pull-requests: read
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      # Forks do not inherit the upstream GitHub App installation or its secrets.
-      # The built-in token can revive canceled auto-merge runs; close/reopen is
-      # disabled because events made with GITHUB_TOKEN do not start new CI runs.
+      # No permission-* subset here: requesting a permission the installation
+      # does not grant fails token minting outright, and these installations
+      # lack actions:write/checks:read (every sweep failed 2026-07-24 until the
+      # subset was reverted). No inputs = the app's full granted set, which the
+      # sweep's re-fire lane is known to work with.
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # zizmor: ignore[github-app] v3
+        id: app-token
+        continue-on-error: true
+        with:
+          app-id: "2729701"
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # zizmor: ignore[github-app] v3
+        id: app-token-fallback
+        if: steps.app-token.outcome == 'failure'
+        with:
+          app-id: "2971289"
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY_FALLBACK }}
       - name: Sweep dropped PR CI runs
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
-          github-token: ${{ github.token }}
+          github-token: ${{ steps.app-token.outputs.token || steps.app-token-fallback.outputs.token }}
           script: |
             const { pathToFileURL } = require("node:url");
             const moduleUrl = pathToFileURL(
@@ -57,5 +68,5 @@ jobs:
               context,
               core,
               dryRun: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }},
-              canRefire: false,
+              appSlug: ${{ toJSON(steps.app-token.outputs.app-slug || steps.app-token-fallback.outputs.app-slug || '') }},
             });

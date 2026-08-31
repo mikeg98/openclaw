@@ -334,7 +334,6 @@ async function reopenWithRetry({ github, core, owner, repo, pullNumber }) {
  *   context: Record<string, unknown>;
  *   core: Pick<Console, "info"> & { setFailed: (message: string) => void };
  *   dryRun?: boolean;
- *   canRefire?: boolean;
  *   appSlug?: string;
  *   now?: number;
  * }} params
@@ -350,7 +349,6 @@ export async function runPrCiSweeper({
   context,
   core,
   dryRun = false,
-  canRefire = true,
   appSlug = "",
   // Injectable clock: fixture-based tests pin a fixed instant so lookback
   // classification cannot rot as wall-clock time passes the fixture dates.
@@ -555,16 +553,6 @@ export async function runPrCiSweeper({
       const detail = preliminary.reason === "ci-attached" ? `: ${attachedRuns.join(", ")}` : "";
       results.push({ number: listed.number, sha: listed.head.sha.slice(0, 12), ...preliminary });
       core.info(`pr-ci-sweeper: skip #${listed.number} (${preliminary.reason}${detail})`);
-      continue;
-    }
-    if (!canRefire) {
-      results.push({
-        number: listed.number,
-        sha: listed.head.sha.slice(0, 12),
-        action: "skip",
-        reason: "app-token-unavailable",
-      });
-      core.info(`pr-ci-sweeper: skip #${listed.number} (app-token-unavailable)`);
       continue;
     }
     // Past the cap, keep classifying (so every scanned PR still gets a logged
