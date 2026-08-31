@@ -61,9 +61,18 @@ jobs:
           DRY_RUN: ${{ github.event_name == 'schedule' && 'false' || inputs.dry_run }}
         run: |
           set -euo pipefail
-          current="$(git tag --list 'v*' | node scripts/lib/docker-release-policy.mjs --current)"
+          upstream="https://github.com/openclaw/openclaw.git"
+          current="$(
+            git ls-remote --tags --refs "${upstream}" 'v*' \
+              | cut -f2 \
+              | sed 's#^refs/tags/##' \
+              | node scripts/lib/docker-release-policy.mjs --current
+          )"
           stable_tag="$(jq -er '.stable.tag' <<< "${current}")"
           extended_stable_tag="$(jq -er '.extendedStable.tag' <<< "${current}")"
+          git fetch --depth=1 --filter=blob:none --force --no-tags "${upstream}" \
+            "+refs/tags/${stable_tag}:refs/tags/${stable_tag}" \
+            "+refs/tags/${extended_stable_tag}:refs/tags/${extended_stable_tag}"
           stable_sha="$(git rev-parse "refs/tags/${stable_tag}^{commit}")"
           extended_stable_sha="$(git rev-parse "refs/tags/${extended_stable_tag}^{commit}")"
           suffix="-r$(date -u +%Y%m%d)"

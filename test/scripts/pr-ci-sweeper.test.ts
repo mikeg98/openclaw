@@ -418,6 +418,37 @@ describe("runPrCiSweeper", () => {
     expect(calls.filter((call) => call.method === "pulls.update")).toEqual([]);
   });
 
+  it("keeps the workflow healthy without an app token and skips close/reopen", async () => {
+    const dropped = {
+      ...pr(),
+      number: 9,
+      state: "open",
+      head: { sha: "c".repeat(40) },
+    };
+    const { github, calls } = fakeGithub({ prs: [dropped], runsBySha: {} });
+    const { core: loggedCore, logs } = recordingCore();
+
+    const results = await runPrCiSweeper({
+      github: github as never,
+      context: context as never,
+      core: loggedCore as never,
+      canRefire: false,
+      now: NOW,
+    });
+
+    expect(results).toEqual([
+      {
+        number: 9,
+        sha: "c".repeat(12),
+        action: "skip",
+        reason: "app-token-unavailable",
+      },
+    ]);
+    expect(calls.filter((call) => call.method === "pulls.get")).toEqual([]);
+    expect(calls.filter((call) => call.method === "pulls.update")).toEqual([]);
+    expect(logs).toContain("pr-ci-sweeper: skip #9 (app-token-unavailable)");
+  });
+
   it("logs a ci-attached skip with the attached run ids", async () => {
     const attached = {
       ...pr(),
