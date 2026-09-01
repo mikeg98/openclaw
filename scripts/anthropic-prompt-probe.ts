@@ -67,6 +67,7 @@ const CAPTURE_PROXY_MAX_BODY_BYTES = parseStrictIntegerOption({
   min: 1,
   raw: process.env.OPENCLAW_PROMPT_CAPTURE_MAX_BODY_BYTES,
 });
+const ANTHROPIC_UPSTREAM_ORIGIN = "https://api.anthropic.com";
 const GATEWAY_LOG_TAIL_BYTES = 256 * 1024;
 const SETUP_TOKEN_RAW = process.env.OPENCLAW_LIVE_SETUP_TOKEN?.trim() ?? "";
 const SETUP_TOKEN_VALUE = process.env.OPENCLAW_LIVE_SETUP_TOKEN_VALUE?.trim() ?? "";
@@ -170,20 +171,16 @@ function summarizeCapture(
   };
 }
 
-function resolveAnthropicUpstreamUrl(
-  requestUrl: string | undefined,
-  upstreamBaseUrl: string,
-): string {
+function resolveAnthropicUpstreamUrl(requestUrl: string | undefined): string {
   const raw = requestUrl || "/";
   if (!raw.startsWith("/") || raw.startsWith("//")) {
     throw new Error(`refusing non-origin proxy request URL: ${JSON.stringify(raw)}`);
   }
-  const upstream = new URL(upstreamBaseUrl);
-  if (upstream.protocol !== "https:" || upstream.hostname !== "api.anthropic.com") {
-    throw new Error(`refusing unexpected Anthropic upstream origin: ${upstream.origin}`);
-  }
   const requestPath = new URL(raw, "http://127.0.0.1");
-  return new URL(`${requestPath.pathname}${requestPath.search}`, upstream).toString();
+  return new URL(
+    `${requestPath.pathname}${requestPath.search}`,
+    ANTHROPIC_UPSTREAM_ORIGIN,
+  ).toString();
 }
 
 function matchesExtraUsage400(...parts: Array<string | undefined>): boolean {
@@ -367,11 +364,7 @@ function extractProxyCapture(rawBody: string, req: http.IncomingMessage): ProxyC
   };
 }
 
-async function startAnthropicProxy(params: {
-  port: number;
-  upstreamBaseUrl: string;
-  timeoutMs: number;
-}) {
+async function startAnthropicProxy(params: { port: number; timeoutMs: number }) {
   let lastCapture: ProxyCapture | undefined;
   const sockets = new Set<import("node:net").Socket>();
   const server = http.createServer((req, res) => {
@@ -382,7 +375,7 @@ async function startAnthropicProxy(params: {
         const rawBody = requestBody.toString("utf8");
         lastCapture = extractProxyCapture(rawBody, req);
 
-        const upstreamUrl = resolveAnthropicUpstreamUrl(req.url, params.upstreamBaseUrl);
+        const upstreamUrl = resolveAnthropicUpstreamUrl(req.url);
         const headers = new Headers();
         for (const [key, value] of Object.entries(req.headers)) {
           if (value === undefined) {
@@ -493,7 +486,6 @@ async function runDirectPrompt(
     ENABLE_CAPTURE && proxyPort
       ? await startAnthropicProxy({
           port: proxyPort,
-          upstreamBaseUrl: "https://api.anthropic.com",
           timeoutMs,
         })
       : undefined;
@@ -834,7 +826,6 @@ async function runGatewayPrompt(prompt: string): Promise<PromptResult> {
     ENABLE_CAPTURE && proxyPort
       ? await startAnthropicProxy({
           port: proxyPort,
-          upstreamBaseUrl: "https://api.anthropic.com",
           timeoutMs: GATEWAY_TIMEOUT_MS,
         })
       : undefined;

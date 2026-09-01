@@ -675,16 +675,10 @@ describe("script-specific dev tooling hardening", () => {
 
   it("rejects absolute-form URLs in the Anthropic capture proxy", () => {
     expect(
-      promptProbeTesting.resolveAnthropicUpstreamUrl(
-        "/v1/messages?anthropic-version=2023-06-01",
-        "https://api.anthropic.com",
-      ),
+      promptProbeTesting.resolveAnthropicUpstreamUrl("/v1/messages?anthropic-version=2023-06-01"),
     ).toBe("https://api.anthropic.com/v1/messages?anthropic-version=2023-06-01");
     expect(() =>
-      promptProbeTesting.resolveAnthropicUpstreamUrl(
-        "http://169.254.169.254/latest/meta-data",
-        "https://api.anthropic.com",
-      ),
+      promptProbeTesting.resolveAnthropicUpstreamUrl("http://169.254.169.254/latest/meta-data"),
     ).toThrow(/refusing non-origin proxy request URL/u);
   });
 
@@ -1205,7 +1199,6 @@ describe("script-specific dev tooling hardening", () => {
     try {
       proxy = await promptProbeTesting.startAnthropicProxy({
         port: 0,
-        upstreamBaseUrl: "https://api.anthropic.com",
         timeoutMs: 100,
       });
       const startedAt = Date.now();

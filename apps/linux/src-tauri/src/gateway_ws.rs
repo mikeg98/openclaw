@@ -2192,10 +2192,11 @@ esac
         ));
         let store = GatewayDeviceIdentityStore::load_or_create(directory.join("identity.json"))
             .expect("device identity");
+        let nonce = Uuid::new_v4().to_string();
         let params = connect_params(
             &store.identity(),
             &GatewayAuth::SharedToken("secret".to_string()),
-            "fixture-nonce",
+            &nonce,
             1_800_000_000_000,
             true,
         )
@@ -2220,7 +2221,7 @@ esac
             CLIENT_DEVICE_FAMILY
         );
         assert_eq!(frame["params"]["auth"], json!({ "token": "secret" }));
-        assert_eq!(frame["params"]["device"]["nonce"], "fixture-nonce");
+        assert_eq!(frame["params"]["device"]["nonce"], nonce);
         assert_eq!(frame["params"]["device"]["signedAt"], 1_800_000_000_000_u64);
         assert_eq!(
             frame["params"]["device"]["id"]
@@ -2239,7 +2240,7 @@ esac
         let pinned_params = connect_params(
             &store.identity(),
             &GatewayAuth::SharedToken("secret".to_string()),
-            "fixture-nonce",
+            &nonce,
             1_800_000_000_000,
             false,
         )
