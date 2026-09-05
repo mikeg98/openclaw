@@ -83,6 +83,33 @@ describe("entry compile cache", () => {
     expect(path.basename(directory)).toMatch(/^\d+-\d+$/);
   });
 
+  it("reuses cached install metadata for repeated compile-cache resolution", async () => {
+    const root = tempDirs.make("openclaw-compile-cache-package-cache-");
+    const packageJsonPath = path.join(root, "package.json");
+    const cacheRoot = path.join(root, ".node-cache");
+    await fs.writeFile(packageJsonPath, '{"version":"2026.4.29"}\n', "utf8");
+
+    const first = resolveOpenClawCompileCacheDirectory({
+      env: { NODE_COMPILE_CACHE: cacheRoot },
+      installRoot: root,
+    });
+    const second = resolveOpenClawCompileCacheDirectory({
+      env: { NODE_COMPILE_CACHE: cacheRoot },
+      installRoot: root,
+    });
+
+    expect(second).toBe(first);
+
+    await fs.writeFile(packageJsonPath, '{"version":"2026.5.0"}\n', "utf8");
+    const replacement = resolveOpenClawCompileCacheDirectory({
+      env: { NODE_COMPILE_CACHE: cacheRoot },
+      installRoot: root,
+    });
+
+    expect(replacement).not.toBe(first);
+    expect(replacement).toContain("2026.5.0");
+  });
+
   it("invalidates a replaced installation without deleting shared compile caches", async () => {
     const root = tempDirs.make("openclaw-compile-cache-package-reinstall-");
     const packageJsonPath = path.join(root, "package.json");

@@ -17,6 +17,10 @@ import {
 } from "./process/respawn-child-runner.js";
 
 const COMPILE_CACHE_DISABLED_RESPAWNED_ENV = "OPENCLAW_COMPILE_CACHE_DISABLED_RESPAWNED";
+const COMPILE_CACHE_INSTALL_METADATA_CACHE = new Map<
+  string,
+  { installMarker: string; version: string }
+>();
 
 export function resolveEntryInstallRoot(entryFile: string): string {
   const entryDir = path.dirname(entryFile);
@@ -77,7 +81,6 @@ function resolveOpenClawCompileCacheDirectory(params: {
 }): string {
   const env = params.env ?? process.env;
   const packageJsonPath = path.join(params.installRoot, "package.json");
-  const version = sanitizeCompileCachePathSegment(readPackageVersion(packageJsonPath));
   let installMarker = "no-package-json";
   try {
     const stat = statSync(packageJsonPath);
@@ -85,6 +88,23 @@ function resolveOpenClawCompileCacheDirectory(params: {
   } catch {
     // Package archives should always have package.json, but keep startup best-effort.
   }
+
+  const cached = COMPILE_CACHE_INSTALL_METADATA_CACHE.get(params.installRoot);
+  if (cached && cached.installMarker === installMarker) {
+    const baseDirectory =
+      env.NODE_COMPILE_CACHE && !isNodeCompileCacheDisabled(env)
+        ? env.NODE_COMPILE_CACHE
+        : path.join(os.tmpdir(), "node-compile-cache");
+    return path.join(
+      baseDirectory,
+      "openclaw",
+      cached.version,
+      sanitizeCompileCachePathSegment(cached.installMarker),
+    );
+  }
+
+  const version = sanitizeCompileCachePathSegment(readPackageVersion(packageJsonPath));
+  COMPILE_CACHE_INSTALL_METADATA_CACHE.set(params.installRoot, { installMarker, version });
   const baseDirectory =
     env.NODE_COMPILE_CACHE && !isNodeCompileCacheDisabled(env)
       ? env.NODE_COMPILE_CACHE
